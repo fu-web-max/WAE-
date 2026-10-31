@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WAE网页版安卓模拟器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: #050505;
+    color: #fff;
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Helvetica Neue", sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* 1. 底层基础点阵 */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+    pointer-events: none;
+    z-index: 0; 
+  }
+
+  /* 2. 顶层高亮点阵（被鼠标照亮） */
+  .highlight-dots {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.7) 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+    pointer-events: none;
+    z-index: 9999;
+    -webkit-mask-image: radial-gradient(circle 150px at var(--mouse-x, -1000px) var(--mouse-y, -1000px), black 0%, transparent 100%);
+    mask-image: radial-gradient(circle 150px at var(--mouse-x, -1000px) var(--mouse-y, -1000px), black 0%, transparent 100%);
+  }
+
+  /* 3. 全局鼠标光晕 */
+  .glow-cursor {
+    position: fixed;
+    top: 0; left: 0;
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 50%);
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    z-index: 10000;
+  }
+
+  /* 页面内容层 */
+  .navbar, .container {
+    position: relative;
+    z-index: 10;
+  }
+
+  /* ---------- 顶部导航栏 ---------- */
+  .navbar {
+    position: fixed;
+    top: 0; left: 0; width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    height: 76px;
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    /* 导航栏的层级必须高于下拉菜单，防止按钮被遮挡 */
+    z-index: 100; 
+  }
+
+  .navbar.scrolled {
+    background: rgba(10, 10, 10, 0.75);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: #fff;
+    font-weight: 600;
+    font-size: 16px;
+  }
+
+  .logo-svg-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 50px;
+  }
+
+  .logo-svg-icon svg {
+    height: 50px;
+  }
+
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* ---------- 语言切换独立样式 ---------- */
+  .lang-selector {
+    position: relative;
+    /* 提升自身层级，保证点击精确命中 */
+    z-index: 105; 
+  }
+  
+  .lang-btn {
+    background: transparent;
+    color: #fff;
+    border: none;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 8px 12px;
+    transition: opacity 0.2s;
+  }
+  
+  .lang-btn:hover { opacity: 0.7; }
+
+  .arrow-down {
+    display: inline-block;
+    width: 0; height: 0; 
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #fff;
+    transition: transform 0.3s ease;
+  }
+
+  .lang-selector.open .arrow-down {
+    transform: rotate(180deg);
+  }
+  
+  .lang-dropdown {
+    position: absolute; 
+    top: calc(100% + 8px); 
+    right: 0;
+    background: #111; 
+    border: 1px solid #333; 
+    border-radius: 8px;
+    padding: 6px; 
+    display: none; 
+    min-width: 120px; 
+    /* 下拉菜单层级必须最高 */
+    z-index: 200;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+  }
+  
+  /* 显示状态 */
+  .lang-selector.open .lang-dropdown {
+    display: block;
+  }
+  
+  .lang-dropdown a { 
+    display: block; 
+    color: #888; 
+    text-decoration: none; 
+    font-size: 13px; 
+    padding: 8px 12px; 
+    border-radius: 4px; 
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  
+  .lang-dropdown a:hover { 
+    color: #000; 
+    background: #00ff66; 
+  }
+
+  /* 方框按钮 */
+  .glow-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .glow-wrap::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 160%; height: 160%;
+    background: radial-gradient(circle, rgba(0, 255, 102, 0.25) 0%, transparent 60%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: -1;
+    border-radius: inherit;
+  }
+  .glow-wrap:hover::before { opacity: 1; }
+
+  .btn-login {
+    background: transparent;
+    color: #ccc;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-login:hover {
+    border-color: rgba(0, 255, 102, 0.5);
+    color: #fff;
+  }
+
+  .btn-register {
+    background: #00ff66;
+    color: #000;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s;
+    overflow: hidden;
+  }
+
+  .btn-register::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 15px 3px rgba(0, 255, 102, 0.6);
+    opacity: 0;
+    animation: softPulseGreen 2.5s infinite ease-in-out;
+    pointer-events: none;
+    z-index: -1;
+  }
+  .btn-register:hover { background: #33ff88; }
+
+  /* ---------- 首屏内容区 ---------- */
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  .hero {
+    text-align: center;
+    padding: 140px 0 60px;
+  }
+
+  .hero h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+    margin-bottom: 20px;
+    color: #fff;
+  }
+
+  .hero .desc {
+    color: #888;
+    font-size: 1rem;
+    max-width: 580px;
+    margin: 0 auto 40px;
+  }
+
+  /* ---------- START 按钮区 ---------- */
+  .btn-start-wrapper {
+    position: relative;
+    display: inline-block;
+    border-radius: 50px;
+  }
+
+  .btn-start-wrapper::before,
+  .btn-start-wrapper::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 50px;
+    box-shadow: 0 0 25px 10px rgba(0, 255, 102, 0.4);
+    opacity: 0;
+    animation: pureGlowExpandGreen 2.5s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+    pointer-events: none;
+    z-index: 0;
+  }
+  
+  .btn-start-wrapper::after {
+    animation-delay: 1.25s;
+  }
+
+  @keyframes pureGlowExpandGreen {
+    0% { transform: scale(1); opacity: 0.8; box-shadow: 0 0 10px 2px rgba(0, 255, 102, 0.6); }
+    100% { transform: scale(1.25); opacity: 0; box-shadow: 0 0 30px 15px rgba(0, 255, 102, 0); }
+  }
+
+  @keyframes softPulseGreen {
+    0% { opacity: 0.6; box-shadow: 0 0 10px 0 rgba(0, 255, 102, 0.4); }
+    50% { opacity: 1; box-shadow: 0 0 20px 4px rgba(0, 255, 102, 0.8); }
+    100% { opacity: 0.6; box-shadow: 0 0 10px 0 rgba(0, 255, 102, 0.4); }
+  }
+
+  .btn-start {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #00ff66;
+    color: #000;
+    font-weight: 800;
+    font-size: 1rem;
+    letter-spacing: 2px;
+    padding: 14px 48px;
+    border-radius: 50px;
+    text-decoration: none;
+    position: relative;
+    z-index: 2;
+    transition: all 0.3s;
+  }
+  .btn-start:hover {
+    background: #33ff88;
+    box-shadow: 0 0 40px rgba(0, 255, 102, 0.6);
+  }
+
+  /* ---------- 卡片区 ---------- */
+  .section {
+    padding: 60px 0 100px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .section h2 {
+    text-align: center;
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: #fff;
+  }
+  .section .sub {
+    text-align: center;
+    color: #888;
+    font-size: 0.95rem;
+    margin-bottom: 40px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .card {
+    background: rgba(15, 15, 15, 0.6);
+    padding: 24px;
+    border-radius: 12px;
+    border: 1px solid #333;
+    cursor: default;
+    transition: all 0.25s ease;
+    position: relative;
+  }
+
+  .card:hover {
+    border-color: #666;
+    background: rgba(25, 25, 25, 0.8);
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 255, 102, 0.05);
+  }
+  
+  .card:active {
+    transform: translateY(0) scale(0.98);
+    background: rgba(5, 5, 5, 0.9);
+  }
+
+  .card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h3::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: #555;
+    border-radius: 50%;
+    transition: all 0.25s;
+  }
+  .card:hover h3::before {
+    background: #00ff66;
+    box-shadow: 0 0 8px #00ff66;
+  }
+
+  .card p {
+    color: #999;
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+  <!-- 顶层高亮点阵 -->
+  <div class="highlight-dots" id="highlightDots"></div>
+
+  <!-- 全局鼠标跟随光晕 -->
+  <div class="glow-cursor" id="cursorGlow"></div>
+
+  <!-- 顶部导航栏 -->
+  <nav class="navbar" id="mainNav">
+    <a href="#" class="logo-area">
+      <div class="logo-svg-icon">
+        <svg viewBox="0 0 100 155" xmlns="http://www.w3.org/2000/svg">
+          <text x="50" y="26" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="30" fill="#00ff66" text-anchor="middle" letter-spacing="2">WAE</text>
+          <line x1="38" y1="48" x2="28" y2="34" stroke="#00ff66" stroke-width="3" stroke-linecap="round" />
+          <line x1="62" y1="48" x2="72" y2="34" stroke="#00ff66" stroke-width="3" stroke-linecap="round" />
+          <path d="M 22 70 A 28 28 0 0 1 78 70 Z" fill="#00ff66" />
+          <circle cx="36" cy="60" r="4" fill="#050505" />
+          <circle cx="64" cy="60" r="4" fill="#050505" />
+          <rect x="22" y="70" width="56" height="4" fill="#050505" />
+          <path d="M 24 74 L 76 74 Q 78 74 78 76 L 78 104 Q 78 108 74 108 L 26 108 Q 22 108 22 104 L 22 76 Q 22 74 24 74 Z" fill="#00ff66" />
+          <rect x="8" y="74" width="10" height="32" rx="5" fill="#00ff66" />
+          <rect x="82" y="74" width="10" height="32" rx="5" fill="#00ff66" />
+          <rect x="34" y="108" width="10" height="20" rx="5" fill="#00ff66" />
+          <rect x="56" y="108" width="10" height="20" rx="5" fill="#00ff66" />
+          <text x="50" y="153" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="30" fill="#00ff66" text-anchor="middle" letter-spacing="2">web</text>
+        </svg>
+      </div>
+      <span data-i18n="nav_title">WAE网页版安卓模拟器</span>
+    </a>
+
+    <div class="nav-actions">
+      <!-- 语言切换 -->
+      <div class="lang-selector" id="langSelector">
+        <button class="lang-btn" id="langBtn">
+          <span id="currentLangText">简体中文</span>
+          <span class="arrow-down"></span>
+        </button>
+        <div class="lang-dropdown" id="langDropdown">
+          <a onclick="switchLanguage('zh')">简体中文</a>
+          <a onclick="switchLanguage('en')">English</a>
+        </div>
+      </div>
+
+      <div class="glow-wrap">
+        <button class="btn-login" data-i18n="btn_login">登录</button>
+      </div>
+      
+      <div class="glow-wrap">
+        <button class="btn-register" data-i18n="btn_register">注册</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- 首屏内容 -->
+  <div class="container">
+    <header class="hero">
+      <h1 data-i18n="hero_title">WAE网页版安卓模拟器</h1>
+      <p class="desc" data-i18n="hero_desc">
+        无需安装任何客户端。通过云端安卓模拟器，在任意设备上打开网页即可运行、调试和体验应用。
+        基础功能免费开放。
+      </p>
+      
+      <!-- START 按钮 -->
+      <div class="btn-start-wrapper">
+        <a class="btn-start" href="https://wandroide.dpdns.org/wae.html">
+          <span data-i18n="btn_start">START →</span>
+        </a>
+      </div>
+    </header>
+
+    <section class="section">
+      <h2 data-i18n="feature_title">核心特性</h2>
+      <p class="sub" data-i18n="feature_sub">专为 Web 端打造的云端安卓运行环境</p>
+
+      <div class="grid">
+        <div class="card">
+          <h3 data-i18n="c1_t">原生云串流</h3>
+          <p data-i18n="c1_p">采用 WebSocket 与 noVNC 串流，操作延迟低至毫秒级，还原真实安卓触控体验。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="c2_t">跨平台免安装</h3>
+          <p data-i18n="c2_p">无需下载庞大客户端。只要设备有浏览器，打开网页即可直接运行 Android 应用。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="c3_t">隔离运行环境</h3>
+          <p data-i18n="c3_p">每个实例在独立的沙箱中运行，互不干扰。退出即销毁，有效保障隐私与数据安全。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="c4_t">高性能调度</h3>
+          <p data-i18n="c4_p">底层基于 KVM 硬件虚拟化，动态分配算力资源，流畅运行大型游戏与专业软件。</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ---------- 1. 语言切换数据与逻辑 ----------
+    const translations = {
+      zh: {
+        nav_title: "WAE网页版安卓模拟器",
+        hero_title: "WAE网页版安卓模拟器",
+        hero_desc: "无需安装任何客户端。通过云端安卓模拟器，在任意设备上打开网页即可运行、调试和体验应用。基础功能免费开放。",
+        btn_login: "登录",
+        btn_register: "注册",
+        btn_start: "START →",
+        feature_title: "核心特性",
+        feature_sub: "专为 Web 端打造的云端安卓运行环境",
+        c1_t: "原生云串流",
+        c1_p: "采用 WebSocket 与 noVNC 串流，操作延迟低至毫秒级，还原真实安卓触控体验。",
+        c2_t: "跨平台免安装",
+        c2_p: "无需下载庞大客户端。只要设备有浏览器，打开网页即可直接运行 Android 应用。",
+        c3_t: "隔离运行环境",
+        c3_p: "每个实例在独立的沙箱中运行，互不干扰。退出即销毁，有效保障隐私与数据安全。",
+        c4_t: "高性能调度",
+        c4_p: "底层基于 KVM 硬件虚拟化，动态分配算力资源，流畅运行大型游戏与专业软件。"
+      },
+      en: {
+        nav_title: "WAE Web Android Emulator",
+        hero_title: "WAE Web Android Emulator",
+        hero_desc: "No client installation required. Run, debug, and experience apps directly in your browser on any device via our cloud Android emulator. Free basic access.",
+        btn_login: "Log In",
+        btn_register: "Sign Up",
+        btn_start: "START →",
+        feature_title: "Core Features",
+        feature_sub: "Cloud Android environment built for the Web",
+        c1_t: "Native Cloud Streaming",
+        c1_p: "WebSocket and noVNC streaming with millisecond latency, delivering authentic touch feedback.",
+        c2_t: "Cross-Platform & No Install",
+        c2_p: "No bulky clients needed. Run Android apps directly in your browser on any device.",
+        c3_t: "Isolated Environment",
+        c3_p: "Each instance runs in an independent sandbox. Destroyed on exit to ensure privacy and security.",
+        c4_t: "High-Performance Scheduling",
+        c4_p: "Based on KVM hardware virtualization, dynamically allocating resources for demanding games and apps."
+      }
+    };
+
+    function switchLanguage(lang) {
+      document.getElementById('currentLangText').textContent = lang === 'zh' ? '简体中文' : 'English';
+      
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (translations[lang][key]) {
+          el.textContent = translations[lang][key];
+        }
+      });
+
+      // 切换后自动收起下拉菜单
+      document.getElementById('langSelector').classList.remove('open');
+    }
+
+    // ---------- 2. 稳健的下拉菜单开关逻辑 ----------
+    const langSelector = document.getElementById('langSelector');
+    const langBtn = document.getElementById('langBtn');
+    const langDropdown = document.getElementById('langDropdown');
+
+    // 点击按钮，切换下拉菜单
+    langBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // 阻止冒泡到 document
+      langSelector.classList.toggle('open');
+    });
+
+    // 点击页面任意其他位置，收起下拉菜单
+    document.addEventListener('click', (e) => {
+      // 如果点击的不在 langSelector 内部，且菜单是打开的，则关闭
+      if (!langSelector.contains(e.target) && langSelector.classList.contains('open')) {
+        langSelector.classList.remove('open');
+      }
+    });
+    
+    // 针对下拉菜单项单独绑定点击，防止冒泡导致失败
+    langDropdown.addEventListener('click', (e) => {
+      // 允许 a 标签自身的 onclick 执行，阻止向上冒泡关闭自己
+      e.stopPropagation();
+    });
+
+    // ---------- 3. 鼠标交互与滚动逻辑 ----------
+    const glow = document.getElementById('cursorGlow');
+    const dots = document.getElementById('highlightDots');
+    const navbar = document.getElementById('mainNav');
+
+    // 鼠标移动 (光晕与点阵)
+    document.addEventListener('mousemove', (e) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      glow.style.left = x + 'px';
+      glow.style.top = y + 'px';
+      dots.style.setProperty('--mouse-x', x + 'px');
+      dots.style.setProperty('--mouse-y', y + 'px');
+    });
+
+    // 页面滑动检测 (导航栏半透明切换)
+    window.addEventListener('scroll', () => {
+      if (window.scrollY > 20) {
+        navbar.classList.add('scrolled');
+      } else {
+        navbar.classList.remove('scrolled');
+      }
+    });
+  </script>
+</body>
+</html>
